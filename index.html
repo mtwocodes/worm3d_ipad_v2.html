@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no" />
+<title>Worm 3D — iPad Controls (Keyboard-style)</title>
+<style>
+  :root {
+    --bg:#000; --text:#e8ecf1; --muted:#9aa4b2; --accent:#ff8c1a;
+    --panel: rgba(255,255,255,.06); --border: rgba(255,255,255,.18);
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial; }
+  .layout {
+    display:grid;
+    grid-template-columns: 240px 1fr 260px;
+    grid-template-rows: 100vh;
+    gap: 10px;
+    padding: 10px;
+  }
+  @media (max-width: 980px) {
+    .layout { grid-template-columns: 1fr; grid-template-rows: auto 60vh auto; }
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px;
+    backdrop-filter: blur(6px);
+  }
+  .title { font-weight: 800; font-size: 14px; color:#d6dde6; margin: 0 0 8px; }
+  /* Left controls: arrows + UP/DOWN column */
+  .dpad {
+    display:grid;
+    grid-template-columns: 64px 64px 64px 80px; /* 3 for arrows, 1 for UP/DOWN */
+    grid-template-rows: 64px 64px 64px;
+    gap: 10px;
+    justify-content:center;
+    align-content:center;
+    touch-action: none;
+    user-select: none;
+  }
+  .btn {
+    background: rgba(255,255,255,.08);
+    border: 1px solid rgba(255,255,255,.16);
+    border-radius: 12px;
+    color: var(--text);
+    font-size: 22px;
+    font-weight: 800;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    touch-action: none;
+    padding: 0 8px;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn.small { font-size: 18px; }
+  .btn.wide { width: 100%; }
+  .pill { background: rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16); padding:6px 10px; border-radius:999px; font-size:12px; }
+  /* Center: canvas fills */
+  #cv { width:100%; height:100%; display:block; border-radius: 14px; }
+  /* Right: touchpad */
+  .pad {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.16);
+    border-radius: 14px;
+    overflow: hidden;
+    touch-action: none;
+  }
+  .pad .crosshair { position:absolute; left:50%; top:50%; width: 50%; height: 50%;
+    transform: translate(-50%, -50%); border: 1px dashed rgba(255,255,255,.15); border-radius: 12px; }
+  .pad .dot { position:absolute; width:16px; height:16px; margin:-8px 0 0 -8px; border-radius:50%;
+    background: var(--accent); left:50%; top:50%; opacity: .9; box-shadow: 0 0 12px rgba(255,140,26,.6); }
+  .row { display:flex; gap:8px; justify-content:space-between; margin-top: 10px; }
+  .zoom .btn { width:56px; height:56px; font-size:24px; }
+  .hud { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; display:flex; gap:8px; }
+  .badge { background: rgba(20,20,24,.65); border:1px solid rgba(255,255,255,.15); padding:6px 10px; border-radius: 10px; font-weight: 700; font-size: 12px; }
+  /* Label styling for UP/DOWN */
+  .label { font-size: 14px; letter-spacing: 0.5px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="left card">
+    <p class="title">Move</p>
+    <!-- Keyboard-like cluster: inverted-T arrows + vertical UP/DOWN column -->
+    <div class="dpad" id="moveDpad">
+      <!-- row 1 -->
+      <div></div>
+      <button class="btn" data-move="forward" aria-label="Forward">↑</button>
+      <div></div>
+      <button class="btn small" data-move="up" aria-label="UP"><span class="label">UP</span></button>
+      <!-- row 2 -->
+      <button class="btn" data-move="left" aria-label="Left">←</button>
+      <button class="btn" data-move="back" aria-label="Back">↓</button>
+      <button class="btn" data-move="right" aria-label="Right">→</button>
+      <div></div>
+      <!-- row 3 -->
+      <div></div>
+      <div></div>
+      <div></div>
+      <button class="btn small" data-move="down" aria-label="DOWN"><span class="label">DOWN</span></button>
+    </div>
+
+    <div class="row">
+      <span class="pill">Wrap: <span id="wrapLabel">Off</span></span>
+      <span class="pill">Speed: <span id="speed">1.0x</span></span>
+    </div>
+    <div class="row">
+      <button class="btn wide" id="pauseBtn">⏸ Pause</button>
+      <button class="btn wide" id="restartBtn">🔁 Restart</button>
+    </div>
+  </div>
+
+  <div class="center card" style="padding:0; position:relative;">
+    <canvas id="cv" width="1280" height="720"></canvas>
+    <div class="hud">
+      <div class="badge">Score: <span id="score">0</span></div>
+      <div class="badge">High: <span id="high">0</span></div>
+    </div>
+  </div>
+
+  <div class="right card">
+    <p class="title">Camera</p>
+    <div class="pad" id="pad">
+      <div class="crosshair"></=">
+      <div class="dot" id="padDot"></div>
+    </div>
+    <div class="row zoom">
+      <button class="btn" id="zoomOut">-</button>
+      <button class="btn" id="zoomIn">+</button>
+    </div>
+    <div class="row">
+      <button class="btn" id="yawLeft" style="width:80px">↺</button>
+      <button class="btn" id="pitchUp" style="width:80px">⤴︎</button>
+      <button class="btn" id="yawRight" style="width:80px">↻</button>
+    </div>
+    <div class="row" style="justify-content:center">
+      <button class="btn" id="pitchDown" style="width:80px">⤵︎</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ===== Config =====
+  const GRID = 12;
+  const STEP_MS = 160;
+  const SPEED_GAIN = 0.96;
+  const DOT_SPACING = 1.4;
+  const DOT_SIZE = 4;
+  const HEAD_R = 0.28, SEG_R = 0.22, FOOD_R = 0.3;
+
+  // ===== Canvas =====
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  function resize() {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    cv.width = Math.round(cv.clientWidth * dpr);
+    cv.height = Math.round(cv.clientHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  const ro = new ResizeObserver(resize); ro.observe(cv);
+
+  // ===== Camera =====
+  let yaw = Math.PI/4, pitch = 0.35, dist = 22;
+  let targetYaw = yaw, targetPitch = pitch;
+  const target = {x:0, y:0, z:0};
+
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+  function wrapPI(a){ while(a<=-Math.PI) a+=2*Math.PI; while(a>Math.PI) a-=2*Math.PI; return a; }
+  function camPos(){
+    const x = target.x + dist * Math.cos(pitch) * Math.cos(yaw);
+    const y = target.y + dist * Math.sin(pitch);
+    const z = target.z + dist * Math.cos(pitch) * Math.sin(yaw);
+    return {x,y,z};
+  }
+  function basis(){
+    const c = camPos();
+    const fx = target.x - c.x, fy = target.y - c.y, fz = target.z - c.z;
+    const fl = Math.hypot(fx,fy,fz) || 1;
+    const f = {x:fx/fl, y:fy/fl, z:fz/fl};
+    const wu = {x:0, y:1, z:0};
+    const rx = f.y*wu.z - f.z*wu.y;
+    const ry = f.z*wu.x - f.x*wu.z;
+    const rz = f.x*wu.y - f.y*wu.x;
+    const rl = Math.hypot(rx,ry,rz) || 1;
+    const r = {x:rx/rl, y:ry/rl, z:rz/rl};
+    const ux = r.y*f.z - r.z*f.y;
+    const uy = r.z*f.x - r.x*f.z;
+    const uz = r.x*f.y - r.y*f.x;
+    return {r, u:{x:ux,y:uy,z:uz}, f};
+  }
+  function project(pt){
+    const c = camPos(), {r,u,f} = basis();
+    const vx = pt.x - c.x, vy = pt.y - c.y, vz = pt.z - c.z;
+    const x = vx*r.x + vy*r.y + vz*r.z;
+    const y = vx*u.x + vy*u.y + vz*u.z;
+    const z = vx*f.x + vy*f.y + vz*f.z;
+    const fov = Math.min(cv.width, cv.height) * 0.9;
+    if (z <= 0.1) return {ok:false};
+    const sx = cv.width/ (window.devicePixelRatio||1) / 2 + (x * fov / z);
+    const sy = cv.height/(window.devicePixelRatio||1) / 2 - (y * fov / z);
+    return {x:sx, y:sy, zcam:z, ok:true, scale:fov/z};
+  }
+  function tweenAngles(){
+    const k = 0.22;
+    const dy = wrapPI(targetYaw - yaw);
+    yaw = wrapPI(yaw + dy * k);
+    const dp = targetPitch - pitch;
+    pitch += dp * k;
+  }
+  function rotateYawSteps(steps){
+    const step = Math.PI/2;
+    targetYaw = Math.round(targetYaw / step) * step;
+    targetYaw = wrapPI(targetYaw + steps * step);
+  }
+  function rotatePitchSteps(steps){
+    const step = Math.PI/2;
+    targetPitch = Math.round(targetPitch / step) * step;
+    targetPitch = clamp(targetPitch + steps * step, -Math.PI/2 + 0.0001, Math.PI/2 - 0.0001);
+  }
+
+  // ===== Lattice =====
+  const centerOffset = (GRID - 1) * DOT_SPACING * 0.5;
+  const lattice = [];
+  for (let x=0;x<GRID;x++) for (let y=0;y<GRID;y++) for (let z=0;z<GRID;z++) {
+    const onShell = (x===0||y===0||z===0||x===GRID-1||y===GRID-1||z===GRID-1);
+    lattice.push({x:x*DOT_SPACING-centerOffset, y:y*DOT_SPACING-centerOffset, z:z*DOT_SPACING-centerOffset, onShell});
+  }
+
+  // ===== Game state =====
+  let snake=[], dir={x:1,y:0,z:0}, lastDir={x:1,y:0,z:0}, food={x:0,y:0,z:0};
+  let stepMs = STEP_MS, lastStep = 0, score=0, high=0, paused=false, alive=true, wrapWalls=false;
+  const scoreEl = document.getElementById('score');
+  const highEl = document.getElementById('high');
+  const speedEl = document.getElementById('speed');
+  const wrapLabel = document.getElementById('wrapLabel');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const restartBtn = document.getElementById('restartBtn');
+
+  const STORAGE_KEY = "worm3d_ipad_high_v2";
+  function loadHigh(){ try{ high=parseInt(localStorage.getItem(STORAGE_KEY)||"0",10)}catch{high=0}; highEl.textContent=high }
+  function saveHigh(){ if(score>high){ high=score; try{localStorage.setItem(STORAGE_KEY,String(high))}catch{}; highEl.textContent=high } }
+  function hud(){
+    scoreEl.textContent=score;
+    speedEl.textContent=(STEP_MS/stepMs).toFixed(1)+'x';
+    wrapLabel.textContent = wrapWalls ? 'On' : 'Off';
+    pauseBtn.textContent = paused?'▶️ Resume':'⏸ Pause';
+  }
+
+  function reset(){
+    snake.length=0;
+    const c = Math.floor(GRID/2);
+    snake.push({x:c,y:c,z:c},{x:c-1,y:c,z:c},{x:c-2,y:c,z:c});
+    dir={x:1,y:0,z:0}; lastDir={...dir};
+    score=0; stepMs=STEP_MS; paused=false; alive=true; placeFood(); hud();
+  }
+  function placeFood(){
+    const occ = new Set(snake.map(s=>`${s.x},${s.y},${s.z}`));
+    let x,y,z,tries=0;
+    do { x=~~(Math.random()*GRID); y=~~(Math.random()*GRID); z=~~(Math.random()*GRID); tries++; if(tries>2000)break; }
+    while (occ.has(`${x},${y},${z}`));
+    food={x,y,z};
+  }
+  function same(a,b){ return a.x===b.x && a.y===b.y && a.z===b.z; }
+  function step(){
+    if(!alive||paused) return;
+    const h = snake[0];
+    let nx=h.x+dir.x, ny=h.y+dir.y, nz=h.z+dir.z;
+    if(wrapWalls){ nx=(nx+GRID)%GRID; ny=(ny+GRID)%GRID; nz=(nz+GRID)%GRID; }
+    else if(nx<0||nx>=GRID||ny<0||ny>=GRID||nz<0||nz>=GRID){ alive=false; saveHigh(); return; }
+    for (let i=0;i<snake.length;i++){ if (snake[i].x===nx && snake[i].y===ny && snake[i].z===nz){ alive=false; saveHigh(); return; } }
+    snake.unshift({x:nx,y:ny,z:nz}); lastDir={...dir};
+    if (same({x:nx,y:ny,z:nz}, food)){ score++; stepMs=Math.max(60, stepMs*SPEED_GAIN); placeFood(); }
+    else { snake.pop(); }
+    hud();
+  }
+
+  // ===== Keyboard (for desktop) =====
+  const keys = {};
+  addEventListener('keydown', e=>{
+    keys[e.key]=true;
+    if(e.key===' '){ paused=!paused; e.preventDefault(); hud(); }
+    if(e.key==='r'||e.key==='R'){ reset(); }
+    if(e.key==='t'||e.key==='T'){ wrapWalls=!wrapWalls; hud(); }
+    if(e.key==='ArrowLeft'){ rotateYawSteps(-1); e.preventDefault(); }
+    if(e.key==='ArrowRight'){ rotateYawSteps(+1); e.preventDefault(); }
+    if(e.key==='ArrowUp'){ rotatePitchSteps(+1); e.preventDefault(); }
+    if(e.key==='ArrowDown'){ rotatePitchSteps(-1); e.preventDefault(); }
+  }, {passive:false});
+  addEventListener('keyup', e=>{ keys[e.key]=false; }, {passive:true});
+
+  function setDirFromKeys(){
+    const c = camPos();
+    const f = {x: target.x - c.x, y: target.y - c.y, z: target.z - c.z};
+    const fl = Math.hypot(f.x,f.y,f.z) || 1; f.x/=fl; f.y/=fl; f.z/=fl;
+    const wu = {x:0,y:1,z:0};
+    const r = {x: f.y*wu.z - f.z*wu.y, y: f.z*wu.x - f.x*wu.z, z: f.x*wu.y - f.y*wu.x};
+    const rl = Math.hypot(r.x,r.y,r.z) || 1; r.x/=rl; r.y/=rl; r.z/=rl;
+
+    function nearestAxis(vec){
+      const cands=[
+        {v:{x: 1, y: 0, z: 0}, d:{x: 1, y: 0, z: 0}},
+        {v:{x:-1, y: 0, z: 0}, d:{x:-1, y: 0, z: 0}},
+        {v:{x: 0, y: 1, z: 0}, d:{x: 0, y: 1, z: 0}},
+        {v:{x: 0, y:-1, z: 0}, d:{x: 0, y:-1, z: 0}},
+        {v:{x: 0, y: 0, z: 1}, d:{x: 0, y: 0, z: 1}},
+        {v:{x: 0, y: 0, z:-1}, d:{x: 0, y: 0, z:-1}},
+      ];
+      const vl = Math.hypot(vec.x,vec.y,vec.z)||1; const vx=vec.x/vl, vy=vec.y/vl, vz=vec.z/vl;
+      let best=cands[0], bd=-1e9;
+      for(const a of cands){ const d=vx*a.v.x + vy*a.v.y + vz*a.v.z; if(d>bd){ bd=d; best=a; } }
+      return best.d;
+    }
+
+    let want=null;
+    if(keys['w']||keys['W']) want = nearestAxis(f);
+    else if(keys['s']||keys['S']) want = nearestAxis({x:-f.x,y:-f.y,z:-f.z});
+    else if(keys['a']||keys['A']) want = nearestAxis({x:-r.x,y:-r.y,z:-r.z});
+    else if(keys['d']||keys['D']) want = nearestAxis(r);
+    else if(keys['q']||keys['Q']) want = {x:0,y:1,z:0};
+    else if(keys['e']||keys['E']) want = {x:0,y:-1,z:0};
+
+    if(want && !(want.x===-lastDir.x && want.y===-lastDir.y && want.z===-lastDir.z)){
+      dir = want;
+    }
+  }
+
+  // ===== Touch: Movement buttons =====
+  function moveFromAction(action){
+    // map action to direction using current camera basis
+    const c = camPos();
+    const f = {x: target.x - c.x, y: target.y - c.y, z: target.z - c.z};
+    const fl = Math.hypot(f.x,f.y,f.z) || 1; f.x/=fl; f.y/=fl; f.z/=fl;
+    const wu = {x:0,y:1,z:0};
+    const r = {x: f.y*wu.z - f.z*wu.y, y: f.z*wu.x - f.x*wu.z, z: f.x*wu.y - f.y*wu.x};
+    const rl = Math.hypot(r.x,r.y,r.z) || 1; r.x/=rl; r.y/=rl; r.z/=rl;
+
+    function nearestAxis(vec){
+      const cands=[
+        {v:{x: 1, y: 0, z: 0}, d:{x: 1, y: 0, z: 0}},
+        {v:{x:-1, y: 0, z: 0}, d:{x:-1, y: 0, z: 0}},
+        {v:{x: 0, y: 1, z: 0}, d:{x: 0, y: 1, z: 0}},
+        {v:{x: 0, y:-1, z: 0}, d:{x: 0, y:-1, z: 0}},
+        {v:{x: 0, y: 0, z: 1}, d:{x: 0, y: 0, z: 1}},
+        {v:{x: 0, y: 0, z:-1}, d:{x: 0, y: 0, z:-1}},
+      ];
+      const vl = Math.hypot(vec.x,vec.y,vec.z)||1; const vx=vec.x/vl, vy=vec.y/vl, vz=vec.z/vl;
+      let best=cands[0], bd=-1e9;
+      for(const a of cands){ const d=vx*a.v.x + vy*a.v.y + vz*a.v.z; if(d>bd){ bd=d; best=a; } }
+      return best.d;
+    }
+
+    let want=null;
+    if(action==='forward') want = nearestAxis(f);
+    if(action==='back')    want = nearestAxis({x:-f.x,y:-f.y,z:-f.z});
+    if(action==='left')    want = nearestAxis({x:-r.x,y:-r.y,z:-r.z});
+    if(action==='right')   want = nearestAxis(r);
+    if(action==='up')      want = {x:0,y:1,z:0};
+    if(action==='down')    want = {x:0,y:-1,z:0};
+
+    if(want && !(want.x===-lastDir.x && want.y===-lastDir.y && want.z===-lastDir.z)){
+      dir = want;
+    }
+  }
+
+  document.getElementById('moveDpad').addEventListener('pointerdown', (e)=>{
+    const btn = e.target.closest('[data-move]'); if(!btn) return;
+    e.preventDefault();
+    btn.setPointerCapture(e.pointerId);
+    moveFromAction(btn.getAttribute('data-move'));
+  }, {passive:false});
+
+  // Pause/Restart/Wrap
+  pauseBtn.addEventListener('pointerdown', (e)=>{ e.preventDefault(); paused=!paused; hud(); }, {passive:false});
+  restartBtn.addEventListener('pointerdown', (e)=>{ e.preventDefault(); reset(); }, {passive:false});
+
+  // ===== Touchpad camera (right) =====
+  const pad = document.getElementById('pad');
+  const padDot = document.getElementById('padDot');
+  let padActive = false, padStart = null, yawStart=0, pitchStart=0;
+
+  function padPoint(e){
+    const rect = pad.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    return {x, y, rect};
+  }
+  function setDot(x, y){
+    padDot.style.left = (x*100)+'%';
+    padDot.style.top  = (y*100)+'%';
+  }
+  pad.addEventListener('pointerdown', (e)=>{
+    e.preventDefault();
+    padActive = true;
+    pad.setPointerCapture(e.pointerId);
+    const p = padPoint(e);
+    padStart = p;
+    yawStart = targetYaw; pitchStart = targetPitch;
+    setDot(p.x, p.y);
+  }, {passive:false});
+  pad.addEventListener('pointermove', (e)=>{
+    if(!padActive) return;
+    const p = padPoint(e);
+    const dx = p.x - padStart.x;
+    const dy = p.y - padStart.y;
+    const ROT = Math.PI; // 180° across pad
+    targetYaw = wrapPI(yawStart + dx * ROT);
+    targetPitch = clamp(pitchStart - dy * ROT, -Math.PI/2 + 0.01, Math.PI/2 - 0.01);
+    setDot(p.x, p.y);
+  }, {passive:false});
+  const endPad = (e)=>{ if(!padActive) return; padActive=false; setDot(.5,.5); pad.releasePointerCapture?.(e.pointerId); };
+  pad.addEventListener('pointerup', endPad, {passive:true});
+  pad.addEventListener('pointercancel', endPad, {passive:true});
+  setDot(.5,.5);
+
+  // Zoom + nudge
+  document.getElementById('zoomIn').addEventListener('pointerdown', (e)=>{ e.preventDefault(); dist = clamp(dist * 0.9, 8, 80); }, {passive:false});
+  document.getElementById('zoomOut').addEventListener('pointerdown', (e)=>{ e.preventDefault(); dist = clamp(dist * 1.1, 8, 80); }, {passive:false});
+  document.getElementById('yawLeft').addEventListener('pointerdown', (e)=>{ e.preventDefault(); rotateYawSteps(-1); }, {passive:false});
+  document.getElementById('yawRight').addEventListener('pointerdown', (e)=>{ e.preventDefault(); rotateYawSteps(+1); }, {passive:false});
+  document.getElementById('pitchUp').addEventListener('pointerdown', (e)=>{ e.preventDefault(); rotatePitchSteps(+1); }, {passive:false});
+  document.getElementById('pitchDown').addEventListener('pointerdown', (e)=>{ e.preventDefault(); rotatePitchSteps(-1); }, {passive:false});
+
+  // ===== Render =====
+  function draw(){
+    tweenAngles();
+    yaw = wrapPI(yaw); pitch = clamp(pitch, -Math.PI/2+0.001, Math.PI/2-0.001);
+
+    ctx.clearRect(0,0,cv.width,cv.height);
+    // wireframe cube
+    const half = (GRID-1)*DOT_SPACING*0.5;
+    const corners = [
+      {x:-half,y:-half,z:-half},{x: half,y:-half,z:-half},{x: half,y: half,z:-half},{x:-half,y: half,z:-half},
+      {x:-half,y:-half,z: half},{x: half,y:-half,z: half},{x: half,y: half,z: half},{x:-half,y: half,z: half},
+    ];
+    const edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255,255,255,0.24)";
+    ctx.beginPath();
+    for(const [a,b] of edges){
+      const pa = project(corners[a]), pb = project(corners[b]);
+      if(pa.ok && pb.ok){ ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); }
+    }
+    ctx.stroke();
+
+    // lattice shell only for clarity
+    ctx.fillStyle = "#ffffff";
+    for(const p of lattice){
+      if (!p.onShell) continue;
+      const s = project(p);
+      if(!s.ok) continue;
+      ctx.fillRect(s.x - DOT_SIZE/2, s.y - DOT_SIZE/2, DOT_SIZE, DOT_SIZE);
+    }
+
+    // food
+    const foodWorld = {
+      x: food.x*DOT_SPACING - centerOffset,
+      y: food.y*DOT_SPACING - centerOffset,
+      z: food.z*DOT_SPACING - centerOffset
+    };
+    const pf = project(foodWorld);
+    if(pf.ok){
+      const r = Math.max(3, FOOD_R * pf.scale);
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || "#ff8c1a";
+      ctx.beginPath(); ctx.arc(pf.x, pf.y, r, 0, Math.PI*2); ctx.fill();
+    }
+
+    // worm segments sorted back-to-front
+    const segsWorld = snake.map((s,i)=>{
+      return { i, world:{x: s.x*DOT_SPACING - centerOffset, y: s.y*DOT_SPACING - centerOffset, z: s.z*DOT_SPACING - centerOffset} };
+    }).map(o=>{ const pr = project(o.world); return {...o, pr}; }).filter(o=>o.pr.ok);
+    segsWorld.sort((a,b)=> a.pr.zcam - b.pr.zcam);
+    for(const o of segsWorld){
+      const r = (o.i===0?HEAD_R:SEG_R) * o.pr.scale;
+      ctx.fillStyle = o.i===0 ? "#b3e7ff" : "#57c7ff";
+      ctx.beginPath(); ctx.arc(o.pr.x, o.pr.y, Math.max(3,r), 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  // ===== Loop =====
+  function loop(ts){
+    requestAnimationFrame(loop);
+    if(alive && !paused){
+      setDirFromKeys();
+      if(ts - lastStep >= stepMs){
+        step(); lastStep = ts;
+      }
+    }
+    draw();
+  }
+
+  // Start
+  resize(); loadHigh(); reset(); requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
